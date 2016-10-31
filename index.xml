@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Amoylan&#39;s Blog</title>
+    <link>https://amoylan.github.io/index.xml</link>
+    <description>Recent content on Amoylan&#39;s Blog</description>
+    <generator>Hugo -- gohugo.io</generator>
+    <language>en-us</language>
+    <lastBuildDate>Sun, 30 Oct 2016 21:46:36 +0800</lastBuildDate>
+    <atom:link href="https://amoylan.github.io/index.xml" rel="self" type="application/rss+xml" />
+    
+    <item>
+      <title>使用代理解决‘go get’失败问题</title>
+      <link>https://amoylan.github.io/post/%E4%BD%BF%E7%94%A8%E4%BB%A3%E7%90%86%E8%A7%A3%E5%86%B3%E2%80%9Cgo%20get%E2%80%9D%E5%A4%B1%E8%B4%A5%E9%97%AE%E9%A2%98/</link>
+      <pubDate>Sun, 30 Oct 2016 21:46:36 +0800</pubDate>
+      
+      <guid>https://amoylan.github.io/post/%E4%BD%BF%E7%94%A8%E4%BB%A3%E7%90%86%E8%A7%A3%E5%86%B3%E2%80%9Cgo%20get%E2%80%9D%E5%A4%B1%E8%B4%A5%E9%97%AE%E9%A2%98/</guid>
+      <description>
+
+&lt;h2 id=&#34;问题描述&#34;&gt;问题描述&lt;/h2&gt;
+
+&lt;p&gt;自从有了自己的ss服务器之后，基本再没有为翻墙而烦恼。然而，最近却遇到了一个奇怪的现象，使用&lt;code&gt;go get&lt;/code&gt;安装library的时候，有一些包会下不下来，报出类似&lt;code&gt;unrecognized import path dial tcp i/o timeout&lt;/code&gt;这样的错误，上网查了一下，是&lt;code&gt;go get&lt;/code&gt;命令不会自动走socks代理，即使配置全局模式也不行。会出现这种问题的包大都是在“golang.org”路径下，GFW不知道为啥脑抽连golang.org都要封。之前使用VPN(PPTP)翻墙的时候，不会遇到这个问题，因为PPTP属于数据链路层，而ss属于传输层。&lt;/p&gt;
+
+&lt;h2 id=&#34;解决方案&#34;&gt;解决方案&lt;/h2&gt;
+
+&lt;p&gt;实际上，&lt;code&gt;go get&lt;/code&gt;命令不过是&lt;code&gt;git clone&lt;/code&gt;命令加上&lt;code&gt;go install&lt;/code&gt;命令的结合（通过搜索错误类型时，猜测git clone 内部是使用curl下载的，没有具体求证）。所以确切地说，只需要解决git不能走socks代理的问题。上网查询到git可以配置http代理，可是我使用的是socks代理，试了一下直接使用socks代理的本地地址，果然是不行的。突然想到之前用于给chromebook激活时用到的“privoxy”，通过http代理转socks代理，终于OK了。具体些，就是开启privoxy监听一个本地地址，配置中，设置成以socks方式转发到本地的socks地址，然后在&lt;code&gt;go get&lt;/code&gt;命令前指定使用prixoxy监听的地址，类似&lt;code&gt;http_proxy=http://127.0.0.1:xxxx https_proxy=https://127.0.0.1:xxxx go get&lt;/code&gt;，大功告成。&lt;/p&gt;
+</description>
+    </item>
+    
+  </channel>
+</rss>

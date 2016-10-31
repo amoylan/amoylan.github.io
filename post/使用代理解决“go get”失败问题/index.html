@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title> 使用代理解决‘go get’失败问题 &middot; Amoylan&#39;s Blog </title>
+  
+  <meta http-equiv="content-type" content="text/html; charset=utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<meta name="generator" content="Hugo 0.17" />
+
+
+<link rel="stylesheet" href="https://amoylan.github.io/css/vec.css">
+
+
+<link rel="apple-touch-icon-precomposed" sizes="144x144" href="/apple-touch-icon-144-precomposed.png">
+<link rel="shortcut icon" href="/favicon.ico">
+
+
+<link href="" rel="alternate" type="application/rss+xml" title="Amoylan&#39;s Blog" />
+
+</head>
+
+<body>
+  <header>
+  <nav>
+    <ul>
+      
+      
+      <li class="pull-left ">
+        <a href="https://amoylan.github.io/">/home/amoylan&#39;s blog</a>
+      </li>
+      
+      
+      <li class="pull-left current">
+        <a href="/post">~/post</a>
+      </li>
+      
+  
+      <li class="pull-right"><a href=""><i class="fa fa-rss"></i></a></li>
+    </ul>
+  </nav>
+</header>
+  <div class="content">
+    
+    
+    <section class="post">
+      <h1 class="post-title"><a href="https://amoylan.github.io/post/%E4%BD%BF%E7%94%A8%E4%BB%A3%E7%90%86%E8%A7%A3%E5%86%B3%E2%80%9Cgo%20get%E2%80%9D%E5%A4%B1%E8%B4%A5%E9%97%AE%E9%A2%98/">使用代理解决‘go get’失败问题</a></h1>
+      <span class="post-date">Oct 30, 2016 </span>
+      <div class="post-content">
+        
+
+<h2 id="问题描述">问题描述</h2>
+
+<p>自从有了自己的ss服务器之后，基本再没有为翻墙而烦恼。然而，最近却遇到了一个奇怪的现象，使用<code>go get</code>安装library的时候，有一些包会下不下来，报出类似<code>unrecognized import path dial tcp i/o timeout</code>这样的错误，上网查了一下，是<code>go get</code>命令不会自动走socks代理，即使配置全局模式也不行。会出现这种问题的包大都是在“golang.org”路径下，GFW不知道为啥脑抽连golang.org都要封。之前使用VPN(PPTP)翻墙的时候，不会遇到这个问题，因为PPTP属于数据链路层，而ss属于传输层。</p>
+
+<h2 id="解决方案">解决方案</h2>
+
+<p>实际上，<code>go get</code>命令不过是<code>git clone</code>命令加上<code>go install</code>命令的结合（通过搜索错误类型时，猜测git clone 内部是使用curl下载的，没有具体求证）。所以确切地说，只需要解决git不能走socks代理的问题。上网查询到git可以配置http代理，可是我使用的是socks代理，试了一下直接使用socks代理的本地地址，果然是不行的。突然想到之前用于给chromebook激活时用到的“privoxy”，通过http代理转socks代理，终于OK了。具体些，就是开启privoxy监听一个本地地址，配置中，设置成以socks方式转发到本地的socks地址，然后在<code>go get</code>命令前指定使用prixoxy监听的地址，类似<code>http_proxy=http://127.0.0.1:xxxx https_proxy=https://127.0.0.1:xxxx go get</code>，大功告成。</p>
+
+      </div>
+    </section>
+    
+    <section class="pagination clearfix">
+       
+      
+    </section>
+    
+    
+<section id="disqus_thread" class='disqus'></section>
+<script>
+  var disqus_config = function () {
+    this.page.url = "https://amoylan.github.io/post/%E4%BD%BF%E7%94%A8%E4%BB%A3%E7%90%86%E8%A7%A3%E5%86%B3%E2%80%9Cgo%20get%E2%80%9D%E5%A4%B1%E8%B4%A5%E9%97%AE%E9%A2%98/";
+    
+  };
+  (function() {
+    var d = document, s = d.createElement('script');
+    s.src = '//amoylan.disqus.com/embed.js';
+    s.setAttribute('data-timestamp', +new Date());
+    (d.head || d.body).appendChild(s);
+  })();
+</script>
+<noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript" rel="nofollow">comments powered by Disqus.</a></noscript>
+
+  </div>
+  
+  <footer>
+  <div class="footer-info">
+    <p>
+      <a href="mailto:lanmengran@qq.com?subject="><i class="fa fa-envelope-o"></i> lanmengran@qq.com </a>
+      {
+        <a href="https://gohugo.io/" title="Hugo :: A fast and modern static website engine">Hugo 0.17</a>,
+        <a href="https://github.com/IvanChou/yii.im" title="vec">Vec</a> 
+      }
+      {<a href="http://creativecommons.org/licenses/by-nc-nd/3.0/" title="CC BY-NC-ND 3.0">CC BY-NC-ND 3.0</a>}
+    </p>
+  </div>
+</footer>
+  
+  <script src="https://amoylan.github.io/js/highlight.min.js"></script>
+  <script>
+    hljs.initHighlightingOnLoad();
+  </script>
+  
+
+</body>
+
+</html>
