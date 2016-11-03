@@ -6,8 +6,217 @@
     <description>Recent content in Post-rsses on Amoylan&#39;s Blog</description>
     <generator>Hugo -- gohugo.io</generator>
     <language>en-us</language>
-    <lastBuildDate>Sun, 30 Oct 2016 21:46:36 +0800</lastBuildDate>
+    <lastBuildDate>Thu, 03 Nov 2016 16:19:22 +0800</lastBuildDate>
     <atom:link href="https://amoylan.github.io/post/index.xml" rel="self" type="application/rss+xml" />
+    
+    <item>
+      <title>Golang读写同步细节</title>
+      <link>https://amoylan.github.io/post/Golang%E8%AF%BB%E5%86%99%E5%90%8C%E6%AD%A5%E7%BB%86%E8%8A%82/</link>
+      <pubDate>Thu, 03 Nov 2016 16:19:22 +0800</pubDate>
+      
+      <guid>https://amoylan.github.io/post/Golang%E8%AF%BB%E5%86%99%E5%90%8C%E6%AD%A5%E7%BB%86%E8%8A%82/</guid>
+      <description>
+
+&lt;p&gt;注：这篇文章是翻译（部分）、总结自这篇&lt;a href=&#34;[https://golang.org/ref/mem]&#34;&gt;官方参考文档&lt;/a&gt;，原文标题为“The Go Memory Model”，不过内容大多是关于同步的。英文好的同学可以直接去看原文，这篇主要用于自己巩固知识。&lt;/p&gt;
+
+&lt;h2 id=&#34;introduction&#34;&gt;Introduction&lt;/h2&gt;
+
+&lt;p&gt;这篇文章阐明了那些&lt;code&gt;两个goroutine分别读写同一个变量，读操作在写操作之后&lt;/code&gt;的情况。对于程序中同时被多个goroutine操作的变量，这些操作需要被序列化，而影响序列化操作先后顺序的因素有：&lt;/p&gt;
+
+&lt;ul&gt;
+&lt;li&gt;channel&lt;/li&gt;
+&lt;li&gt;sync(Mutex、RWMutex)&lt;/li&gt;
+&lt;li&gt;sync/atomic // 本篇暂不涉及&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;初始化&#34;&gt;初始化&lt;/h2&gt;
+
+&lt;ul&gt;
+&lt;li&gt;如果包a import 包b，那么b的init函数先于包a的init函数&lt;/li&gt;
+&lt;li&gt;所有包的init函数先于main.main函数&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&#34;goroutine&#34;&gt;goroutine&lt;/h2&gt;
+
+&lt;p&gt;这个比较简单，直接举例说明&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;var a string
+func f() {
+    a = &amp;quot;hello&amp;quot; // 1
+    go func() {
+        print(a) // 2
+        a = &amp;quot;world&amp;quot; // 3
+    }()
+    print(a) // 4
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;上面的代码中，2打印的一定是“hello”，4处打印的却不一定是“world”&lt;/p&gt;
+
+&lt;h2 id=&#34;channel&#34;&gt;channel&lt;/h2&gt;
+
+&lt;p&gt;channel可以用来保证读写顺序，根据构造方式，分为有缓存的channel和无缓存的channel两种。注意以下两种情况：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;// 情况1，打印的一定是“hello world”
+var c = make(chan int)
+var s string
+func main() {
+    go func() {
+        s = &amp;quot;hello world&amp;quot;
+        &amp;lt;-c // 1
+    }()
+    c &amp;lt;- 0 // 2
+    print(s)
+}
+
+// 情况2，打印的不能保证是“hello world”
+var c = make(chan int， 1)
+var s string
+func main() {
+    go func() {
+        s = &amp;quot;hello world&amp;quot;
+        &amp;lt;-c // 3
+    }()
+    c &amp;lt;- 0 // 4
+    print(s)
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;上述两种情况的区别在于：情况1是没有缓存的channel，1与2是同时发生的，即在执行到1之前，2是被阻塞的；而对于情况2，4的操作向channel输入一个数不会阻塞，此时不能确保s已经被赋值。&lt;/p&gt;
+
+&lt;p&gt;在一个channel缓存满了后，才会开始阻塞。对于一个容量为N的channel，第c次输出优先于第c + N次输入。可以利用channel的这一特性，对某些资源做出限制：&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;var limit = make(chan int, 3)
+
+func main() {
+    for _, w := range work {
+        go func(w func()) {
+            limit &amp;lt;- 1
+            w()
+            &amp;lt;-limit
+        }(w)
+    }
+    select{}
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;上面的程序，保证了对于一个工作队列，同一时刻最多只有3项任务在执行&lt;/p&gt;
+
+&lt;h2 id=&#34;locks&#34;&gt;Locks&lt;/h2&gt;
+
+&lt;p&gt;sync包实现了sync.Mutex和sync.RWMutex，第n + 1次Lock()会被阻塞，直到第n次Unlock()返回&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;var l sync.Mutex
+func f() {
+    a = &amp;quot;hello, world&amp;quot;
+    l.Unlock()
+}
+
+func main() {
+    l.Lock()
+    go f()
+    l.Lock()
+    print(a)
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;上述程序会确保输出“hello, world”&lt;/p&gt;
+
+&lt;p&gt;对于RWMutex，当第n次Unlock()发生后，第n + 1此Lock()会被阻塞，直到有相同数量的RLock()和RUnlock()发生&lt;/p&gt;
+
+&lt;h2 id=&#34;once&#34;&gt;Once&lt;/h2&gt;
+
+&lt;p&gt;Once用于多个goroutine并发时，初始化函数只执行一次，在初始化函数结束前，所有goroutine都会阻塞。&lt;/p&gt;
+
+&lt;pre&gt;&lt;code&gt;var a string
+var once sync.Once
+
+func setup() {
+    a = &amp;quot;hello, world&amp;quot;
+}
+
+func doprint() {
+    once.Do(setup)
+    print(a)
+}
+
+func twoprint() {
+    go doprint()
+    go doprint()
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;上面的代码确保会输出两次“hello world”&lt;/p&gt;
+
+&lt;h2 id=&#34;错误的同步示例&#34;&gt;错误的同步示例&lt;/h2&gt;
+
+&lt;pre&gt;&lt;code&gt;// 情况1，有可能出现先打印2，再打印0（与代码中赋值顺序相反）
+var a, b int
+
+func f() {
+    a = 1
+    b = 2
+}
+
+func g() {
+    print(b)
+    print(a)
+}
+
+func main() {
+    go f()
+    g()
+}
+
+// 情况2，有可能出现第二次打印为空的现象。因为没有同步机制，不能通过确保done被赋值，推断出a被赋值
+var a string
+var done bool
+
+func setup() {
+    a = &amp;quot;hello, world&amp;quot;
+    done = true
+}
+
+func doprint() {
+    if !done {
+        once.Do(setup)
+    }
+    print(a)
+}
+
+func twoprint() {
+    go doprint()
+    go doprint()
+}
+
+// 情况3，有可能出现打印为空的现象。
+type T struct {
+    msg string
+}
+
+var g *T
+
+func setup() {
+    t := new(T)
+    t.msg = &amp;quot;hello, world&amp;quot;
+    g = t
+}
+
+func main() {
+    go setup()
+    for g == nil {
+    }
+    print(g.msg)
+}
+&lt;/code&gt;&lt;/pre&gt;
+
+&lt;p&gt;上述三种情况都需要使用同步机制来保证读写顺序&lt;/p&gt;
+
+&lt;h2 id=&#34;关于编译优化的疑问&#34;&gt;关于编译优化的疑问&lt;/h2&gt;
+
+&lt;p&gt;作为一名通信工程专业的野生程序员，不懂编译原理（一定会学，暂时优先级不高），我猜测编译器会在程序中根据特定规则标记一些位置，这些位置之间的代码（主要是赋值语句）的顺序是不确定的，而标记过的位置则是有序的。比如，一个函数语句前有a、b两条赋值语句，后有c、d两条赋值语句，那么a与b、c与d的顺序是不确定的，但a、b一定会在c、d之前？&lt;/p&gt;
+</description>
+    </item>
     
     <item>
       <title>使用代理解决‘go get’失败问题</title>

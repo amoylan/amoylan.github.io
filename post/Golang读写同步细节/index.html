@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title> Golang读写同步细节 &middot; Amoylan&#39;s Blog </title>
+  
+  <meta http-equiv="content-type" content="text/html; charset=utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<meta name="generator" content="Hugo 0.17" />
+
+
+<link rel="stylesheet" href="https://amoylan.github.io/css/vec.css">
+
+
+<link rel="apple-touch-icon-precomposed" sizes="144x144" href="/apple-touch-icon-144-precomposed.png">
+<link rel="shortcut icon" href="/favicon.ico">
+
+
+<link href="" rel="alternate" type="application/rss+xml" title="Amoylan&#39;s Blog" />
+
+</head>
+
+<body>
+  <header>
+  <nav>
+    <ul>
+      
+      
+      <li class="pull-left ">
+        <a href="https://amoylan.github.io/">/home/amoylan&#39;s blog</a>
+      </li>
+      
+      
+      <li class="pull-left current">
+        <a href="/post">~/post</a>
+      </li>
+      
+  
+      <li class="pull-right"><a href=""><i class="fa fa-rss"></i></a></li>
+    </ul>
+  </nav>
+</header>
+  <div class="content">
+    <nav id="TableOfContents">
+<ul>
+<li>
+<ul>
+<li><a href="#introduction">Introduction</a></li>
+<li><a href="#初始化">初始化</a></li>
+<li><a href="#goroutine">goroutine</a></li>
+<li><a href="#channel">channel</a></li>
+<li><a href="#locks">Locks</a></li>
+<li><a href="#once">Once</a></li>
+<li><a href="#错误的同步示例">错误的同步示例</a></li>
+<li><a href="#关于编译优化的疑问">关于编译优化的疑问</a></li>
+</ul></li>
+</ul>
+</nav>
+    
+    <section class="post">
+      <h1 class="post-title"><a href="https://amoylan.github.io/post/Golang%E8%AF%BB%E5%86%99%E5%90%8C%E6%AD%A5%E7%BB%86%E8%8A%82/">Golang读写同步细节</a></h1>
+      <span class="post-date">Nov 3, 2016 </span>
+      <div class="post-content">
+        
+
+<p>注：这篇文章是翻译（部分）、总结自这篇<a href="[https://golang.org/ref/mem]">官方参考文档</a>，原文标题为“The Go Memory Model”，不过内容大多是关于同步的。英文好的同学可以直接去看原文，这篇主要用于自己巩固知识。</p>
+
+<h2 id="introduction">Introduction</h2>
+
+<p>这篇文章阐明了那些<code>两个goroutine分别读写同一个变量，读操作在写操作之后</code>的情况。对于程序中同时被多个goroutine操作的变量，这些操作需要被序列化，而影响序列化操作先后顺序的因素有：</p>
+
+<ul>
+<li>channel</li>
+<li>sync(Mutex、RWMutex)</li>
+<li>sync/atomic // 本篇暂不涉及</li>
+</ul>
+
+<h2 id="初始化">初始化</h2>
+
+<ul>
+<li>如果包a import 包b，那么b的init函数先于包a的init函数</li>
+<li>所有包的init函数先于main.main函数</li>
+</ul>
+
+<h2 id="goroutine">goroutine</h2>
+
+<p>这个比较简单，直接举例说明</p>
+
+<pre><code>var a string
+func f() {
+    a = &quot;hello&quot; // 1
+    go func() {
+        print(a) // 2
+        a = &quot;world&quot; // 3
+    }()
+    print(a) // 4
+}
+</code></pre>
+
+<p>上面的代码中，2打印的一定是“hello”，4处打印的却不一定是“world”</p>
+
+<h2 id="channel">channel</h2>
+
+<p>channel可以用来保证读写顺序，根据构造方式，分为有缓存的channel和无缓存的channel两种。注意以下两种情况：</p>
+
+<pre><code>// 情况1，打印的一定是“hello world”
+var c = make(chan int)
+var s string
+func main() {
+    go func() {
+        s = &quot;hello world&quot;
+        &lt;-c // 1
+    }()
+    c &lt;- 0 // 2
+    print(s)
+}
+
+// 情况2，打印的不能保证是“hello world”
+var c = make(chan int， 1)
+var s string
+func main() {
+    go func() {
+        s = &quot;hello world&quot;
+        &lt;-c // 3
+    }()
+    c &lt;- 0 // 4
+    print(s)
+}
+</code></pre>
+
+<p>上述两种情况的区别在于：情况1是没有缓存的channel，1与2是同时发生的，即在执行到1之前，2是被阻塞的；而对于情况2，4的操作向channel输入一个数不会阻塞，此时不能确保s已经被赋值。</p>
+
+<p>在一个channel缓存满了后，才会开始阻塞。对于一个容量为N的channel，第c次输出优先于第c + N次输入。可以利用channel的这一特性，对某些资源做出限制：</p>
+
+<pre><code>var limit = make(chan int, 3)
+
+func main() {
+    for _, w := range work {
+        go func(w func()) {
+            limit &lt;- 1
+            w()
+            &lt;-limit
+        }(w)
+    }
+    select{}
+}
+</code></pre>
+
+<p>上面的程序，保证了对于一个工作队列，同一时刻最多只有3项任务在执行</p>
+
+<h2 id="locks">Locks</h2>
+
+<p>sync包实现了sync.Mutex和sync.RWMutex，第n + 1次Lock()会被阻塞，直到第n次Unlock()返回</p>
+
+<pre><code>var l sync.Mutex
+func f() {
+    a = &quot;hello, world&quot;
+    l.Unlock()
+}
+
+func main() {
+    l.Lock()
+    go f()
+    l.Lock()
+    print(a)
+}
+</code></pre>
+
+<p>上述程序会确保输出“hello, world”</p>
+
+<p>对于RWMutex，当第n次Unlock()发生后，第n + 1此Lock()会被阻塞，直到有相同数量的RLock()和RUnlock()发生</p>
+
+<h2 id="once">Once</h2>
+
+<p>Once用于多个goroutine并发时，初始化函数只执行一次，在初始化函数结束前，所有goroutine都会阻塞。</p>
+
+<pre><code>var a string
+var once sync.Once
+
+func setup() {
+    a = &quot;hello, world&quot;
+}
+
+func doprint() {
+    once.Do(setup)
+    print(a)
+}
+
+func twoprint() {
+    go doprint()
+    go doprint()
+}
+</code></pre>
+
+<p>上面的代码确保会输出两次“hello world”</p>
+
+<h2 id="错误的同步示例">错误的同步示例</h2>
+
+<pre><code>// 情况1，有可能出现先打印2，再打印0（与代码中赋值顺序相反）
+var a, b int
+
+func f() {
+    a = 1
+    b = 2
+}
+
+func g() {
+    print(b)
+    print(a)
+}
+
+func main() {
+    go f()
+    g()
+}
+
+// 情况2，有可能出现第二次打印为空的现象。因为没有同步机制，不能通过确保done被赋值，推断出a被赋值
+var a string
+var done bool
+
+func setup() {
+    a = &quot;hello, world&quot;
+    done = true
+}
+
+func doprint() {
+    if !done {
+        once.Do(setup)
+    }
+    print(a)
+}
+
+func twoprint() {
+    go doprint()
+    go doprint()
+}
+
+// 情况3，有可能出现打印为空的现象。
+type T struct {
+    msg string
+}
+
+var g *T
+
+func setup() {
+    t := new(T)
+    t.msg = &quot;hello, world&quot;
+    g = t
+}
+
+func main() {
+    go setup()
+    for g == nil {
+    }
+    print(g.msg)
+}
+</code></pre>
+
+<p>上述三种情况都需要使用同步机制来保证读写顺序</p>
+
+<h2 id="关于编译优化的疑问">关于编译优化的疑问</h2>
+
+<p>作为一名通信工程专业的野生程序员，不懂编译原理（一定会学，暂时优先级不高），我猜测编译器会在程序中根据特定规则标记一些位置，这些位置之间的代码（主要是赋值语句）的顺序是不确定的，而标记过的位置则是有序的。比如，一个函数语句前有a、b两条赋值语句，后有c、d两条赋值语句，那么a与b、c与d的顺序是不确定的，但a、b一定会在c、d之前？</p>
+
+      </div>
+    </section>
+    
+    <section class="pagination clearfix">
+      
+      <a class="btn previous " href="https://amoylan.github.io/post/%E4%BD%BF%E7%94%A8%E4%BB%A3%E7%90%86%E8%A7%A3%E5%86%B3%E2%80%9Cgo%20get%E2%80%9D%E5%A4%B1%E8%B4%A5%E9%97%AE%E9%A2%98/"> 使用代理解决‘go get’失败问题 </a> 
+       
+      
+    </section>
+    
+    
+<section id="disqus_thread" class='disqus'></section>
+<script>
+  var disqus_config = function () {
+    this.page.url = "https://amoylan.github.io/post/Golang%E8%AF%BB%E5%86%99%E5%90%8C%E6%AD%A5%E7%BB%86%E8%8A%82/";
+    
+  };
+  (function() {
+    var d = document, s = d.createElement('script');
+    s.src = '//amoylan.disqus.com/embed.js';
+    s.setAttribute('data-timestamp', +new Date());
+    (d.head || d.body).appendChild(s);
+  })();
+</script>
+<noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript" rel="nofollow">comments powered by Disqus.</a></noscript>
+
+  </div>
+  
+  <footer>
+  <div class="footer-info">
+    <p>
+      <a href="mailto:lanmengran@qq.com?subject="><i class="fa fa-envelope-o"></i> lanmengran@qq.com </a>
+      {
+        <a href="https://gohugo.io/" title="Hugo :: A fast and modern static website engine">Hugo 0.17</a>,
+        <a href="https://github.com/IvanChou/yii.im" title="vec">Vec</a> 
+      }
+      {<a href="http://creativecommons.org/licenses/by-nc-nd/3.0/" title="CC BY-NC-ND 3.0">CC BY-NC-ND 3.0</a>}
+    </p>
+  </div>
+</footer>
+  
+  <script src="https://amoylan.github.io/js/highlight.min.js"></script>
+  <script>
+    hljs.initHighlightingOnLoad();
+  </script>
+  
+
+</body>
+
+</html>
